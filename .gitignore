@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Ambiente virtual
+venv/
+env/
+.venv/
+
+# Modelo MediaPipe (7 MB, não precisa versionar)
+assets/pose_landmarker.task
+
+# VS Code
+.vscode/
+
+# Sistema
+.DS_Store
+Thumbs.db

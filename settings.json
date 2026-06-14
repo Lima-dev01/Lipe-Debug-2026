@@ -1,0 +1,20 @@
+{
+  "window": {
+    "width": 800,
+    "height": 600,
+    "fps": 60,
+    "title": "Jogo do LIPE"
+  },
+  "camera": {
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "show_overlay": true,
+    "overlay_alpha": 180
+  },
+  "gesture": {
+    "frames_to_confirm": 3,
+    "wrist_above_shoulder_margin": 0.05
+  },
+  "debug": true
+}
