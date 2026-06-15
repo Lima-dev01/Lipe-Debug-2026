@@ -50,7 +50,7 @@ def frame_to_surface(frame_rgb: np.ndarray, target_size: tuple) -> pygame.Surfac
 
 def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
              small_font: pygame.font.Font,
-             raise_right: bool, raise_left: bool, fps: float):
+             raise_left: bool, raise_right: bool, fps: float):
     """Desenha HUD de debug com estado dos gestos e FPS."""
 
     # Painel inferior

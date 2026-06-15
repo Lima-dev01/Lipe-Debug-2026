@@ -28,14 +28,14 @@ class GestureDetector:
         self.raise_left  = packet["raise_left"]
 
         if _debug:
-            if self.raise_right and not self._prev_right:
+            if self.raise_left and not self._prev_left:
                 print("[GESTO] Braço DIREITO levantado ↑")
-            elif not self.raise_right and self._prev_right:
+            elif not self.raise_left and self._prev_left:
                 print("[GESTO] Braço direito abaixado ↓")
 
-            if self.raise_left and not self._prev_left:
+            if self.raise_right and not self._prev_right:
                 print("[GESTO] Braço ESQUERDO levantado ↑")
-            elif not self.raise_left and self._prev_left:
+            elif not self.raise_right and self._prev_right:
                 print("[GESTO] Braço esquerdo abaixado ↓")
 
         self._prev_right = self.raise_right
