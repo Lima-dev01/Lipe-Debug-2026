@@ -1,88 +1,40 @@
 """
-main.py — Jogo do LIPE  V0
-Loop principal com:
-  - Janela Pygame 800×600
-  - Overlay da webcam com landmarks MediaPipe
-  - Detecção de gesto (braço direito/esquerdo levantado)
-  - HUD de debug mostrando estado do gesto em tempo real
+main.py — Jogo do LIPE  V1
+- Menu completo (SceneMenu)
+- Mecânica central: objetos caindo, gesto, colisão (ScenePhase)
+- Câmera + MediaPipe rodando em thread separada
 """
-
 import sys
-import numpy as np
 import pygame
-import cv2
 
-from src.config  import CONFIG
-from src.camera  import CameraThread
-from src.gesture import GestureDetector
+from src.config     import CONFIG
+from src.game_state import GameState, State
+from src.camera     import CameraThread
+from src.gesture    import GestureDetector
+from src.scenes.scene_menu  import SceneMenu
+from src.scenes.scene_phase import ScenePhase
 
-# ── Configurações ─────────────────────────────────────────────────────────────
-WIN_W   = CONFIG["window"]["width"]
-WIN_H   = CONFIG["window"]["height"]
-FPS     = CONFIG["window"]["fps"]
-TITLE   = CONFIG["window"]["title"]
-SHOW_OV = CONFIG["camera"]["show_overlay"]
-OV_ALPHA= CONFIG["camera"]["overlay_alpha"]
-DEBUG   = CONFIG["debug"]
-
-# ── Cores ─────────────────────────────────────────────────────────────────────
-C_BG         = (30,  30,  40)
-C_WHITE      = (255, 255, 255)
-C_GREEN      = (50,  220, 120)
-C_RED        = (220,  60,  60)
-C_YELLOW     = (255, 210,  50)
-C_DARK       = (15,  15,  20)
-C_OVERLAY_BG = (20,  20,  30, 200)
+WIN_W = CONFIG["window"]["width"]
+WIN_H = CONFIG["window"]["height"]
+FPS   = CONFIG["window"]["fps"]
+TITLE = CONFIG["window"]["title"]
 
 
-def frame_to_surface(frame_rgb: np.ndarray, target_size: tuple) -> pygame.Surface:
-    """Converte ndarray RGB do OpenCV em pygame.Surface redimensionada."""
-    h, w = frame_rgb.shape[:2]
-    # Redimensiona mantendo proporção dentro de target_size
-    tw, th = target_size
-    scale  = min(tw / w, th / h)
-    nw, nh = int(w * scale), int(h * scale)
-    resized = cv2.resize(frame_rgb, (nw, nh))
-    # numpy H×W×3 → pygame precisa de (W, H) e transposta dos eixos
-    surface = pygame.surfarray.make_surface(resized.swapaxes(0, 1))
-    return surface
+def load_lipe() -> pygame.Surface | None:
+    import os
+    path = os.path.join(os.path.dirname(__file__), "assets", "images", "lipe.png")
+    if os.path.exists(path):
+        return pygame.image.load(path).convert_alpha()
+    print("[AVISO] assets/images/lipe.png não encontrado.")
+    return None
 
 
-def draw_hud(screen: pygame.Surface, font: pygame.font.Font,
-             small_font: pygame.font.Font,
-             raise_left: bool, raise_right: bool, fps: float):
-    """Desenha HUD de debug com estado dos gestos e FPS."""
-
-    # Painel inferior
-    panel = pygame.Surface((WIN_W, 70), pygame.SRCALPHA)
-    panel.fill((15, 15, 20, 210))
-    screen.blit(panel, (0, WIN_H - 70))
-
-    # Estado braço direito
-    cor_r = C_GREEN if raise_right else C_RED
-    label_r = "DIREITO ↑" if raise_right else "direito ↓"
-    txt_r = font.render(f"Braço {label_r}", True, cor_r)
-    screen.blit(txt_r, (20, WIN_H - 55))
-
-    # Estado braço esquerdo
-    cor_l = C_GREEN if raise_left else C_RED
-    label_l = "ESQUERDO ↑" if raise_left else "esquerdo ↓"
-    txt_l = font.render(f"Braço {label_l}", True, cor_l)
-    screen.blit(txt_l, (WIN_W // 2, WIN_H - 55))
-
-    # FPS
-    fps_txt = small_font.render(f"FPS: {fps:.0f}", True, C_YELLOW)
-    screen.blit(fps_txt, (WIN_W - 90, WIN_H - 55))
-
-    # Versão
-    ver_txt = small_font.render("LIPE V0 — Prova de Conceito", True, (120, 120, 140))
-    screen.blit(ver_txt, (20, WIN_H - 25))
-
-
-def draw_overlay_label(screen: pygame.Surface, small_font: pygame.font.Font):
-    """Etiqueta no canto do overlay da câmera."""
-    lbl = small_font.render("webcam + MediaPipe", True, (180, 180, 200))
-    screen.blit(lbl, (WIN_W - lbl.get_width() - 10, 8))
+def draw_placeholder(screen, gs, font):
+    screen.fill((20, 12, 45))
+    msg  = font.render(f"Cena: {gs.current.name}  (em desenvolvimento)", True, (180, 180, 200))
+    hint = font.render("ESC = voltar ao menu", True, (100, 100, 120))
+    screen.blit(msg,  msg.get_rect(center=(WIN_W // 2, WIN_H // 2 - 20)))
+    screen.blit(hint, hint.get_rect(center=(WIN_W // 2, WIN_H // 2 + 20)))
 
 
 def main():
@@ -90,90 +42,88 @@ def main():
     screen = pygame.display.set_mode((WIN_W, WIN_H))
     pygame.display.set_caption(TITLE)
     clock = pygame.time.Clock()
+    font  = pygame.font.SysFont("Arial", 18, bold=True)
 
-    font       = pygame.font.SysFont("Arial", 18, bold=True)
-    small_font = pygame.font.SysFont("Arial", 14)
-    title_font = pygame.font.SysFont("Arial", 32, bold=True)
+    lipe_surface = load_lipe()
 
-    # ── Inicia câmera em thread separada ─────────────────────────────────────
+    # ── Estado e cenas ────────────────────────────────────────────────────────
+    gs         = GameState()
+    scene_menu = SceneMenu(lipe_surface=lipe_surface)
+    scene_phase: ScenePhase | None = None
+
+    # ── Câmera ────────────────────────────────────────────────────────────────
     cam     = CameraThread()
     gesture = GestureDetector()
     cam.start()
-
-    last_surface = None   # último frame da câmera convertido
-
-    print("[LIPE V0] Iniciando... pressione ESC para sair.")
+    print("[LIPE V1] Rodando... ESC volta ao menu.")
 
     running = True
     while running:
+        dt        = clock.tick(FPS) / 1000.0
+        mouse_pos = pygame.mouse.get_pos()
 
-        # ── Eventos ──────────────────────────────────────────────────────────
+        # ── Eventos ───────────────────────────────────────────────────────────
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
 
-        # ── Atualiza câmera / gesto ───────────────────────────────────────────
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                if gs.current != State.MENU:
+                    gs.go(State.MENU)
+                    scene_menu.sub = "menu"
+                    scene_phase    = None
+
+            if gs.current == State.MENU:
+                scene_menu.handle_event(event, gs)
+
+            elif gs.current in (State.PHASE_1, State.PHASE_2):
+                if scene_phase:
+                    scene_phase.handle_event(event)
+
+        # ── Câmera / gesto ────────────────────────────────────────────────────
         packet = cam.get_latest()
         gesture.update(packet)
+        # ── Transição INTRO_1 → PHASE_1 (placeholder direto por ora) ─────────
+        if gs.current == State.INTRO_1:
+            gs.go(State.PHASE_1)
 
-        if packet is not None:
-            ov_w = WIN_W // 3        # overlay ocupa 1/3 da largura
-            ov_h = int(ov_w * 0.75)  # mantém proporção 4:3
-            last_surface = frame_to_surface(packet["frame_rgb"], (ov_w, ov_h))
+        # ── Inicializa ScenePhase ao entrar na fase ───────────────────────────
+        if gs.current == State.PHASE_1 and (
+                scene_phase is None or scene_phase.phase != 1):
+            scene_phase = ScenePhase(1, lipe_surface)
 
-        # ── Desenha ───────────────────────────────────────────────────────────
-        screen.fill(C_BG)
+        if gs.current == State.PHASE_2 and (
+                scene_phase is None or scene_phase.phase != 2):
+            scene_phase = ScenePhase(2, lipe_surface)
 
-        # Título central (placeholder até ter assets)
-        title_txt = title_font.render("Jogo do LIPE", True, C_WHITE)
-        screen.blit(title_txt, (WIN_W // 2 - title_txt.get_width() // 2, 40))
+        # ── Transição PHASE_1 → PHASE_2 quando done ──────────────────────────
+        if gs.current == State.PHASE_1 and scene_phase and scene_phase.done:
+            gs.go(State.PHASE_2)
+            scene_phase = None
 
-        sub_txt = small_font.render(
-            "V0 — câmera e detecção de gesto funcionando", True, (140, 140, 160)
-        )
-        screen.blit(sub_txt, (WIN_W // 2 - sub_txt.get_width() // 2, 85))
+        if gs.current == State.PHASE_2 and scene_phase and scene_phase.done:
+            gs.go(State.RESULT)
+            scene_phase = None
 
-        # Instrução
-        inst = font.render(
-            "Levante o braço direito para testar o gesto", True, (200, 200, 220)
-        )
-        screen.blit(inst, (WIN_W // 2 - inst.get_width() // 2, WIN_H // 2 - 20))
+        # ── Update ────────────────────────────────────────────────────────────
+        if gs.current == State.MENU:
+            scene_menu.update(mouse_pos)
 
-        # Indicador visual grande de gesto
-        if gesture.raise_right:
-            circ_color = C_GREEN
-            circ_txt   = font.render("GESTO DETECTADO!", True, C_GREEN)
+        elif gs.current in (State.PHASE_1, State.PHASE_2) and scene_phase:
+            scene_phase.update(dt, gesture, cam_packet=packet)
+
+        # ── Draw ──────────────────────────────────────────────────────────────
+        if gs.current == State.MENU:
+            scene_menu.draw(screen)
+
+        elif gs.current in (State.PHASE_1, State.PHASE_2) and scene_phase:
+            scene_phase.draw(screen)
+
         else:
-            circ_color = (60, 60, 80)
-            circ_txt   = font.render("aguardando gesto...", True, (100, 100, 120))
-
-        pygame.draw.circle(screen, circ_color, (WIN_W // 2, WIN_H // 2 + 60), 30, 4)
-        screen.blit(circ_txt, (WIN_W // 2 - circ_txt.get_width() // 2, WIN_H // 2 + 100))
-
-        # Overlay câmera (canto superior direito)
-        if SHOW_OV and last_surface is not None:
-            ov_x = WIN_W - last_surface.get_width() - 10
-            ov_y = 10
-            # Borda
-            pygame.draw.rect(screen, (80, 80, 100),
-                             (ov_x - 2, ov_y - 2,
-                              last_surface.get_width() + 4,
-                              last_surface.get_height() + 4), 2)
-            screen.blit(last_surface, (ov_x, ov_y))
-            draw_overlay_label(screen, small_font)
-
-        # HUD inferior
-        draw_hud(screen, font, small_font,
-                 gesture.raise_right, gesture.raise_left,
-                 clock.get_fps())
+            draw_placeholder(screen, gs, font)
 
         pygame.display.flip()
-        clock.tick(FPS)
 
-    # ── Encerra ───────────────────────────────────────────────────────────────
     cam.stop()
     pygame.quit()
     sys.exit()
