@@ -6,7 +6,7 @@
     "title": "Jogo do LIPE"
   },
   "camera": {
-    "index": 2,
+    "device": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0",
     "width": 640,
     "height": 480,
     "show_overlay": true,

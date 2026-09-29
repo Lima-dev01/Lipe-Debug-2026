@@ -54,7 +54,7 @@ class CameraThread:
     """
 
     def __init__(self):
-        self._cap = cv2.VideoCapture(_cfg_cam["index"])
+        self._cap = self._open_camera()
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  _cfg_cam["width"])
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _cfg_cam["height"])
 
@@ -78,6 +78,33 @@ class CameraThread:
         )
         self._detector = mp_vision.PoseLandmarker.create_from_options(options)
         self._thread   = threading.Thread(target=self._run, daemon=True)
+
+    def _open_camera(self) -> cv2.VideoCapture:
+        """
+        Abre a câmera configurada em settings.json.
+
+        Aceita dois formatos em "camera":
+          - "device": caminho estável do dispositivo, ex.:
+                "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0"
+                (não muda mesmo se a câmera for desplugada/replugada em
+                outra porta USB — preferível quando há mais de uma câmera)
+          - "index": índice numérico legado, ex.: 0
+                (mais simples, mas pode mudar de dispositivo se a ordem
+                de enumeração do sistema mudar)
+
+        Se "device" existir, tem prioridade sobre "index". Se a câmera
+        configurada não abrir (ex.: desconectada), cai para o índice 0
+        em vez de travar o jogo.
+        """
+        source = _cfg_cam.get("device", _cfg_cam.get("index", 0))
+        cap = cv2.VideoCapture(source)
+
+        if not cap.isOpened():
+            print(f"[CAMERA] Não consegui abrir '{source}'. "
+                  f"Usando câmera padrão (index 0) como fallback.")
+            cap = cv2.VideoCapture(0)
+
+        return cap
 
     def _get_model_path(self) -> str:
         import os, urllib.request
