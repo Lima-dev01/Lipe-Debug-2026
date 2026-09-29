@@ -1,18 +1,25 @@
 """
-scene_phase.py — V1
-Mecânica central:
+scene_phase.py — V2
+Mecânica central + pontuação e progressão da fase:
+
+  - Contagem regressiva ("5, 4, 3, 2, 1... VAI!") antes de cada fase começar
   - Objetos (emoji) passam da direita para esquerda em trilhas
   - Baú (fase 1) ou Cesto (fase 2) centralizado na tela
   - Levantar o braço direito → objeto cai de onde estiver
-  - Se estiver sobre o recipiente → ACERTO (some + feedback)
-  - Se não estiver → ERRO (cai no chão + feedback)
-  - Sem pontuação ainda (V1)
+  - Pontuação (via src.score.ScoreTracker) com 4 resultados possíveis:
+        item certo  no alvo      -> +2
+        item errado ignorado     -> +1
+        item certo  ignorado     -> -1
+        item errado no alvo      -> -2
+  - Velocidade dos objetos sobe a cada 5 resolvidos, até 4 aumentos
+  - Fase termina quando a velocidade atinge o teto e o último lote acaba
 """
 import pygame
 import random
 from src.config          import CONFIG
 from src.gesture         import GestureDetector
 from src.emoji_renderer  import emoji_surface, preload
+from src.score           import ScoreTracker, Outcome
 
 WIN_W = CONFIG["window"]["width"]
 WIN_H = CONFIG["window"]["height"]
@@ -21,6 +28,7 @@ WIN_H = CONFIG["window"]["height"]
 C_BG       = (15, 8, 38)
 C_YELLOW   = (255, 227, 69)
 C_TEAL     = (124, 255, 203)
+C_ORANGE   = (255, 170, 70)     # usado no feedback "-1" (oportunidade perdida)
 C_RED      = (220,  70,  70)
 C_WHITE    = (255, 255, 255)
 C_GRAY     = (140, 140, 160)
@@ -49,27 +57,55 @@ PHASE_CONFIG = {
 # ── Trilhas verticais dos objetos ─────────────────────────────────────────────
 TRACKS = [105, 165, 225, 285]   # y de cada trilha (abaixo do HUD)
 
-OBJECT_SPEED   = 180   # px/s na horizontal
-FALL_SPEED     = 400   # px/s na queda
+FALL_SPEED     = 400   # px/s na queda (referência de projeto — ver FallingObject)
 HIT_RADIUS     = 90    # px — raio de acerto ao redor do centro do alvo
 SPAWN_INTERVAL = 1.8   # segundos entre spawns
 FONT_SIZE_OBJ  = 52    # tamanho do emoji do objeto
 FONT_SIZE_TGT  = 110   # tamanho do emoji do recipiente
 
+# ── Progressão de velocidade e duração da rodada ──────────────────────────────
+# A velocidade sobe a cada OBJECTS_PER_LEVEL objetos resolvidos, até um teto
+# de MAX_SPEED_INCREASES aumentos. A fase termina quando o teto é atingido E
+# o lote de objetos daquele nível também termina.
+OBJECTS_PER_LEVEL      = 5
+MAX_SPEED_INCREASES    = 4
+SPEED_LEVELS           = [180, 220, 260, 300, 340]   # px/s — 1 valor por nível
+TOTAL_OBJECTS_PER_PHASE = OBJECTS_PER_LEVEL * (MAX_SPEED_INCREASES + 1)  # 25
+
+# ── Contagem regressiva de início de fase ─────────────────────────────────────
+COUNTDOWN_START           = 5      # "5, 4, 3, 2, 1"
+COUNTDOWN_SECONDS_PER_NUM = 1.0    # segundos que cada número fica na tela
+GO_FLASH_SECONDS          = 0.6    # duração do "VAI!" antes de liberar o jogo
+
+# ── Texto/cor do feedback flutuante para cada resultado de pontuação ──────────
+_FEEDBACK_BY_OUTCOME = {
+    Outcome.HIT_CORRECT:    ("+2  ✓",  C_TEAL),
+    Outcome.IGNORED_WRONG:  ("+1  👍", C_TEAL),
+    Outcome.MISSED_CORRECT: ("-1  😕", C_ORANGE),
+    Outcome.HIT_WRONG:      ("-2  ✗",  C_RED),
+}
+
 
 class FallingObject:
     """Um objeto que passa pela tela e pode ser derrubado."""
 
-    def __init__(self, emoji: str, is_correct: bool, track_y: int):
+    def __init__(self, emoji: str, is_correct: bool, track_y: int, speed: float):
         self.emoji      = emoji
         self.is_correct = is_correct
         self.x          = float(WIN_W + 60)
         self.y          = float(track_y)
         self.track_y    = track_y
-        self.state    = "moving"   # moving | falling | done
-        self.vy       = 0.0
-        self.alpha    = 255
-        self.will_hit = False   # definido no momento do drop
+        self.speed      = speed        # px/s horizontal — fixado no momento do spawn
+        self.state      = "moving"     # moving | falling | done
+        self.vy         = 0.0
+        self.alpha      = 255
+        self.will_hit   = False        # definido no momento do drop
+
+        # Controle de pontuação — garante que cada objeto é resolvido
+        # (pontuado) exatamente uma vez, não importa por qual caminho
+        # ele termina (acerto, erro, ou simplesmente ignorado).
+        self.was_dropped = False
+        self.scored      = False
 
     def drop(self, target_cx: int, hit_margin: int = 40):
         """
@@ -78,16 +114,17 @@ class FallingObject:
         A queda é sempre reta — sem desvio horizontal.
         """
         if self.state == "moving":
-            self.state    = "falling"
-            self.vy       = 0.0
-            self.will_hit = abs(self.x - target_cx) <= hit_margin
+            self.state       = "falling"
+            self.vy          = 0.0
+            self.was_dropped = True
+            self.will_hit    = abs(self.x - target_cx) <= hit_margin
 
     def update(self, dt: float) -> bool:
         """Retorna True quando o objeto deve ser removido."""
         if self.state == "moving":
-            self.x -= OBJECT_SPEED * dt
+            self.x -= self.speed * dt
             if self.x < -80:
-                self.state = "done"
+                self.state = "done"    # saiu da tela sem ser derrubado
 
         elif self.state == "falling":
             self.vy += 900 * dt   # gravidade — x não muda
@@ -105,7 +142,7 @@ class FallingObject:
 
 
 class Feedback:
-    """Texto flutuante de acerto/erro."""
+    """Texto flutuante de acerto/erro/pontuação."""
     def __init__(self, text: str, color, cx: int, cy: int):
         self.text  = text
         self.color = color
@@ -128,10 +165,11 @@ class ScenePhase:
         self._cfg    = PHASE_CONFIG[phase]
 
         # Fontes (só para UI — emojis usam emoji_renderer)
-        self._font_ui    = pygame.font.SysFont("Arial", 18, bold=True)
-        self._font_small = pygame.font.SysFont("Arial", 14)
-        self._font_badge = pygame.font.SysFont("Arial", 17, bold=True)
-        self._font_fb    = pygame.font.SysFont("Arial", 38, bold=True)
+        self._font_ui        = pygame.font.SysFont("Arial", 18, bold=True)
+        self._font_small     = pygame.font.SysFont("Arial", 14)
+        self._font_badge     = pygame.font.SysFont("Arial", 17, bold=True)
+        self._font_fb        = pygame.font.SysFont("Arial", 38, bold=True)
+        self._font_countdown = pygame.font.SysFont("Arial", 96, bold=True)
 
         # Pré-carrega todos os emojis desta fase
         all_emojis = (self._cfg["correct"] + self._cfg["incorrect"]
@@ -147,7 +185,7 @@ class ScenePhase:
             self._cfg["target_emoji"], size=FONT_SIZE_TGT
         )
 
-        # Estado
+        # ── Estado de jogo ────────────────────────────────────────────────────
         self._objects: list[FallingObject] = []
         self._feedbacks: list[Feedback]    = []
         self._spawn_timer  = 0.0
@@ -158,55 +196,80 @@ class ScenePhase:
         self._tick         = 0
         self._webcam_surf: pygame.Surface | None = None   # frame atual da câmera
 
+        # ── Pontuação e progressão da rodada ──────────────────────────────────
+        self._score        = ScoreTracker()
+        self._resolved      = 0                    # objetos já resolvidos
+        self._speed_level   = 0                     # índice em SPEED_LEVELS
+        self._object_speed  = SPEED_LEVELS[0]
+
+        # ── Contagem regressiva de início ─────────────────────────────────────
+        # "countdown" (5→1) → "go" ("VAI!") → "playing" (jogo liberado)
+        self._phase_state     = "countdown"
+        self._countdown_value = COUNTDOWN_START
+        self._countdown_timer = COUNTDOWN_SECONDS_PER_NUM
+        self._go_timer        = 0.0
+
     # ── API pública ───────────────────────────────────────────────────────────
     @property
     def done(self) -> bool:
         return self._done
 
+    @property
+    def score(self) -> ScoreTracker:
+        """Exposto para o loop principal usar em telas de resultado (V3)."""
+        return self._score
+
     def handle_event(self, event: pygame.event.Event):
-        if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+        if event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+            if self._phase_state in ("countdown", "go"):
+                # Atalho de dev: pula direto para o jogo
+                self._phase_state = "playing"
+            else:
+                # Atalho de dev: pula direto para a próxima fase
                 self._done = True
 
     def update(self, dt: float, gesture: GestureDetector,
                cam_packet: dict | None = None):
         self._tick += 1
+        self._update_webcam(cam_packet)
 
-        # Atualiza frame da webcam
-        if cam_packet is not None:
-            import numpy as np
-            import cv2
-            frame = cam_packet["frame_rgb"]
-            h, w  = frame.shape[:2]
-            # Redimensiona para o tamanho do overlay (160×120)
-            frame_small = cv2.resize(frame, (160, 120))
-            self._webcam_surf = pygame.surfarray.make_surface(
-                frame_small.swapaxes(0, 1)
-            )
-        self._tick += 1
+        if self._phase_state == "countdown":
+            self._update_countdown(dt)
+            return
+        if self._phase_state == "go":
+            self._update_go_flash(dt)
+            return
 
-        # ── Spawn ────────────────────────────────────────────────────────────
+        # ── "playing": mecânica normal do jogo ─────────────────────────────────
         self._spawn_timer -= dt
         if self._spawn_timer <= 0:
             self._spawn_object()
             self._spawn_timer = SPAWN_INTERVAL
 
-        # ── Gesto: borda de subida do braço direito ───────────────────────────
-        raise_now  = gesture.raise_right
+        # Gesto: borda de subida do braço
+        raise_now   = gesture.raise_right
         just_raised = raise_now and not self._prev_raise
         self._prev_raise = raise_now
 
         if just_raised:
             self._drop_nearest()
 
-        # ── Atualiza objetos ──────────────────────────────────────────────────
+        # Atualiza objetos e resolve pontuação
         to_remove = []
         for obj in self._objects:
             finished = obj.update(dt)
 
-            # Verifica colisão com recipiente durante queda
             if obj.state == "falling":
                 self._check_collision(obj)
+
+            # Resolve (pontua) objetos que terminam SEM cair no alvo:
+            # passaram direto pela tela, ou foram derrubados mas erraram.
+            if not obj.scored:
+                if obj.state == "done" and not obj.was_dropped:
+                    self._resolve(obj, ended_in_target=False)
+                elif (obj.state == "falling" and not obj.will_hit
+                      and obj.y > WIN_H - 60):
+                    self._resolve(obj, ended_in_target=False)
 
             if finished:
                 to_remove.append(obj)
@@ -214,10 +277,10 @@ class ScenePhase:
         for obj in to_remove:
             self._objects.remove(obj)
 
-        # ── Atualiza feedbacks ────────────────────────────────────────────────
+        # Feedbacks flutuantes
         self._feedbacks = [f for f in self._feedbacks if not f.update(dt)]
 
-        # ── Flash ─────────────────────────────────────────────────────────────
+        # Flash de tela
         if self._flash > 0:
             self._flash = max(0.0, self._flash - dt)
 
@@ -243,14 +306,14 @@ class ScenePhase:
         for obj in self._objects:
             self._draw_object(surf, obj)
 
-        # Feedbacks flutuantes
+        # Feedbacks flutuantes (acerto/erro/pontuação/nível de velocidade)
         for fb in self._feedbacks:
             fb_surf = self._font_fb.render(fb.text, True, fb.color)
             fb_surf.set_alpha(fb.alpha)
             surf.blit(fb_surf, fb_surf.get_rect(
                 centerx=WIN_W // 2, centery=int(fb.y)))
 
-        # HUD topo
+        # HUD topo (fase, pontuação e progresso da rodada)
         self._draw_hud(surf)
 
         # Badge de instrução
@@ -262,12 +325,43 @@ class ScenePhase:
         # Indicador de braço (debug visual)
         self._draw_arm_indicator(surf)
 
-        # Dica ENTER
-        hint = self._font_small.render(
-            "ENTER → próxima fase (temporário)", True, (80, 80, 100))
-        surf.blit(hint, (WIN_W - hint.get_width() - 10, WIN_H - 22))
+        if self._phase_state in ("countdown", "go"):
+            self._draw_countdown_overlay(surf)
+        else:
+            # Dica ENTER (atalho de desenvolvimento)
+            hint = self._font_small.render(
+                "ENTER → próxima fase (temporário)", True, (80, 80, 100))
+            surf.blit(hint, (WIN_W - hint.get_width() - 10, WIN_H - 22))
 
-    # ── Internos ──────────────────────────────────────────────────────────────
+    # ── Internos: webcam ──────────────────────────────────────────────────────
+    def _update_webcam(self, cam_packet: dict | None):
+        """Atualiza a miniatura da webcam a partir do pacote da CameraThread."""
+        if cam_packet is None:
+            return
+        import cv2
+        frame = cam_packet["frame_rgb"]
+        # Redimensiona para o tamanho do overlay (160×120)
+        frame_small = cv2.resize(frame, (160, 120))
+        self._webcam_surf = pygame.surfarray.make_surface(
+            frame_small.swapaxes(0, 1)
+        )
+
+    # ── Internos: contagem regressiva ─────────────────────────────────────────
+    def _update_countdown(self, dt: float):
+        self._countdown_timer -= dt
+        if self._countdown_timer <= 0:
+            self._countdown_value -= 1
+            self._countdown_timer = COUNTDOWN_SECONDS_PER_NUM
+            if self._countdown_value <= 0:
+                self._phase_state = "go"
+                self._go_timer    = GO_FLASH_SECONDS
+
+    def _update_go_flash(self, dt: float):
+        self._go_timer -= dt
+        if self._go_timer <= 0:
+            self._phase_state = "playing"
+
+    # ── Internos: mecânica de jogo ────────────────────────────────────────────
     def _spawn_object(self):
         all_items = (
             [(e, True)  for e in self._cfg["correct"]] +
@@ -275,7 +369,9 @@ class ScenePhase:
         )
         emoji, is_correct = random.choice(all_items)
         track = random.choice(TRACKS)
-        self._objects.append(FallingObject(emoji, is_correct, track))
+        self._objects.append(
+            FallingObject(emoji, is_correct, track, speed=self._object_speed)
+        )
 
     def _drop_nearest(self):
         """Derruba o objeto mais próximo do centro horizontal."""
@@ -287,37 +383,69 @@ class ScenePhase:
 
     def _check_collision(self, obj: FallingObject):
         """
-        Resultado definido no drop() pelo x do objeto.
-        Aqui só espera o objeto chegar na altura do alvo para
-        disparar o feedback — sem depender de colisão frame a frame.
+        Resultado (vai acertar ou não) já foi definido no drop() pelo x do
+        objeto. Aqui só esperamos o objeto chegar na altura do alvo para
+        resolver a pontuação — sem depender de colisão frame a frame.
         """
-        if obj.state != "falling":
+        if obj.state != "falling" or obj.scored:
             return
-        # Aguarda o objeto atingir o centro vertical do alvo
         if obj.y < self._target_rect.centery:
             return
 
         if obj.will_hit:
-            if obj.is_correct:
-                self._on_hit(obj)
-            else:
-                self._on_miss(obj)
-        # Se will_hit=False o objeto continua caindo e some no chão
+            self._resolve(obj, ended_in_target=True)
+            obj.state = "done"   # some imediatamente dentro do recipiente
+        # Se will_hit=False o objeto segue caindo e é resolvido mais tarde,
+        # quando pousar no chão (ver update()).
 
-    def _on_hit(self, obj: FallingObject):
-        obj.state = "done"
+    def _resolve(self, obj: FallingObject, ended_in_target: bool):
+        """
+        Ponto único de resolução de um objeto: registra a pontuação,
+        dispara o feedback visual (texto + flash de tela) e avança o
+        progresso da rodada (nível de velocidade / fim de fase).
+
+        Garantido por `obj.scored` a nunca rodar duas vezes para o
+        mesmo objeto, mesmo que seja chamado a partir de mais de um
+        lugar (colisão com o alvo, pouso no chão, saída de tela).
+        """
+        if obj.scored:
+            return
+        obj.scored = True
+
+        delta   = self._score.register(obj.is_correct, ended_in_target)
+        outcome = self._score.last_outcome
+        text, color = _FEEDBACK_BY_OUTCOME[outcome]
+
         self._feedbacks.append(
-            Feedback("+2 ✓", C_TEAL, WIN_W // 2, WIN_H // 2 - 80))
+            Feedback(text, color, WIN_W // 2, WIN_H // 2 - 80))
         self._flash       = 0.25
-        self._flash_color = C_TEAL
+        self._flash_color = color
 
-    def _on_miss(self, obj: FallingObject):
-        obj.state = "done"
-        self._feedbacks.append(
-            Feedback("ERROU! ✗", C_RED, WIN_W // 2, WIN_H // 2 - 80))
-        self._flash       = 0.25
-        self._flash_color = C_RED
+        self._advance_round()
 
+    def _advance_round(self):
+        """
+        Chamado a cada objeto resolvido. Controla a progressão de
+        velocidade (a cada OBJECTS_PER_LEVEL objetos) e decide quando
+        a fase termina (velocidade no teto + último lote concluído).
+        """
+        self._resolved += 1
+
+        level_up = (self._resolved % OBJECTS_PER_LEVEL == 0
+                    and self._speed_level < MAX_SPEED_INCREASES)
+        if level_up:
+            self._speed_level  += 1
+            self._object_speed  = SPEED_LEVELS[self._speed_level]
+            self._feedbacks.append(
+                Feedback("⚡ Mais rápido!", C_YELLOW,
+                         WIN_W // 2, WIN_H // 2 - 130))
+
+        round_finished = (self._speed_level >= MAX_SPEED_INCREASES
+                          and self._resolved >= TOTAL_OBJECTS_PER_PHASE)
+        if round_finished:
+            self._done = True
+
+    # ── Desenho ───────────────────────────────────────────────────────────────
     def _draw_target(self, surf: pygame.Surface):
         import math
         # Anel pulsante
@@ -355,7 +483,7 @@ class ScenePhase:
             surf.blit(shadow, (int(obj.x) - 25, obj.track_y + 28))
 
     def _draw_hud(self, surf: pygame.Surface):
-        hud = pygame.Surface((WIN_W, 50), pygame.SRCALPHA)
+        hud = pygame.Surface((WIN_W, 56), pygame.SRCALPHA)
         hud.fill((8, 4, 24, 210))
         surf.blit(hud, (0, 0))
 
@@ -364,12 +492,24 @@ class ScenePhase:
             True, C_WHITE)
         surf.blit(phase_txt, (20, 14))
 
+        # Pontuação + nível de velocidade, alinhados à direita
+        score_txt = self._font_ui.render(
+            f"Pontos: {self._score.total}   ⚡{self._speed_level}/{MAX_SPEED_INCREASES}",
+            True, C_YELLOW)
+        surf.blit(score_txt, (WIN_W - score_txt.get_width() - 20, 14))
+
+        # Barra de progresso da rodada
+        progress = min(1.0, self._resolved / TOTAL_OBJECTS_PER_PHASE)
+        bar_x, bar_y, bar_w, bar_h = 20, 42, WIN_W - 40, 6
+        pygame.draw.rect(surf, (40, 35, 70), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
+        pygame.draw.rect(surf, C_TEAL, (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=3)
+
     def _draw_badge(self, surf: pygame.Surface):
         badge_txt = self._font_badge.render(self._cfg["badge"], True, C_BG)
         bw = badge_txt.get_width() + 30
         bh = badge_txt.get_height() + 10
         bx = WIN_W // 2 - bw // 2
-        by = 58
+        by = 66
         badge_bg = pygame.Surface((bw, bh), pygame.SRCALPHA)
         badge_bg.fill((*self._cfg["badge_color"], 230))
         pygame.draw.rect(badge_bg, C_BG, (0, 0, bw, bh), 2, border_radius=12)
@@ -406,3 +546,20 @@ class ScenePhase:
         txt    = self._font_small.render(label, True, color)
         surf.blit(txt, (WIN_W - txt.get_width() - 14, WIN_H - 44))
         pygame.draw.circle(surf, color, (WIN_W - txt.get_width() - 26, WIN_H - 36), 6)
+
+    def _draw_countdown_overlay(self, surf: pygame.Surface):
+        """Tela semitransparente com a contagem regressiva de início da fase."""
+        overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
+        overlay.fill((*C_BG, 165))
+        surf.blit(overlay, (0, 0))
+
+        if self._phase_state == "countdown":
+            text, color = str(self._countdown_value), C_YELLOW
+        else:  # "go"
+            text, color = "VAI!", C_TEAL
+
+        txt_surf = self._font_countdown.render(text, True, color)
+        surf.blit(txt_surf, txt_surf.get_rect(center=(WIN_W // 2, WIN_H // 2)))
+
+        sub = self._font_ui.render("Prepare-se!", True, C_WHITE)
+        surf.blit(sub, sub.get_rect(centerx=WIN_W // 2, top=WIN_H // 2 + 62))
