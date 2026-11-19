@@ -13,6 +13,13 @@ Mecânica central + pontuação e progressão da fase:
         item errado no alvo      -> -2
   - Velocidade dos objetos sobe a cada 5 resolvidos, até 4 aumentos
   - Fase termina quando a velocidade atinge o teto e o último lote acaba
+
+Todas as posições/tamanhos/velocidades em pixel foram pensadas para uma
+resolução de referência de 800x600. Para suportar uma resolução interna
+maior (ver settings.json -> window.width/height) sem redesenhar o
+layout, cada valor espacial passa pelo helper S(), que aplica o fator
+de escala UI_SCALE. Durações em segundos (timers, SPAWN_INTERVAL) NÃO
+são escaladas — tempo não muda com resolução.
 """
 import pygame
 import random
@@ -23,6 +30,15 @@ from src.score           import ScoreTracker, Outcome
 
 WIN_W = CONFIG["window"]["width"]
 WIN_H = CONFIG["window"]["height"]
+
+# Resolução de referência do design original = 800x600.
+UI_SCALE = WIN_W / 800
+
+
+def S(value: float) -> int:
+    """Escala um valor espacial pensado para 800x600 até a resolução atual."""
+    return round(value * UI_SCALE)
+
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 C_BG       = (15, 8, 38)
@@ -54,14 +70,15 @@ PHASE_CONFIG = {
     },
 }
 
-# ── Trilhas verticais dos objetos ─────────────────────────────────────────────
-TRACKS = [105, 165, 225, 285]   # y de cada trilha (abaixo do HUD)
+# ── Trilhas verticais dos objetos (valores de referência 800x600) ────────────
+TRACKS = [S(105), S(165), S(225), S(285)]   # y de cada trilha (abaixo do HUD)
 
-FALL_SPEED     = 400   # px/s na queda (referência de projeto — ver FallingObject)
-HIT_RADIUS     = 90    # px — raio de acerto ao redor do centro do alvo
-SPAWN_INTERVAL = 1.8   # segundos entre spawns
-FONT_SIZE_OBJ  = 52    # tamanho do emoji do objeto
-FONT_SIZE_TGT  = 110   # tamanho do emoji do recipiente
+GRAVITY        = S(900)  # px/s² de aceleração na queda
+FALL_SPEED     = S(400)  # px/s — referência histórica (ver FallingObject)
+HIT_RADIUS     = S(90)   # px — raio de acerto ao redor do centro do alvo
+SPAWN_INTERVAL = 1.8     # segundos entre spawns — TEMPORAL, não escala
+FONT_SIZE_OBJ  = S(52)   # tamanho do emoji do objeto
+FONT_SIZE_TGT  = S(110)  # tamanho do emoji do recipiente
 
 # ── Progressão de velocidade e duração da rodada ──────────────────────────────
 # A velocidade sobe a cada OBJECTS_PER_LEVEL objetos resolvidos, até um teto
@@ -69,10 +86,10 @@ FONT_SIZE_TGT  = 110   # tamanho do emoji do recipiente
 # o lote de objetos daquele nível também termina.
 OBJECTS_PER_LEVEL      = 5
 MAX_SPEED_INCREASES    = 4
-SPEED_LEVELS           = [180, 220, 260, 300, 340]   # px/s — 1 valor por nível
+SPEED_LEVELS            = [S(v) for v in (180, 220, 260, 300, 340)]  # px/s
 TOTAL_OBJECTS_PER_PHASE = OBJECTS_PER_LEVEL * (MAX_SPEED_INCREASES + 1)  # 25
 
-# ── Contagem regressiva de início de fase ─────────────────────────────────────
+# ── Contagem regressiva de início de fase (TEMPORAL — não escala) ────────────
 COUNTDOWN_START           = 5      # "5, 4, 3, 2, 1"
 COUNTDOWN_SECONDS_PER_NUM = 1.0    # segundos que cada número fica na tela
 GO_FLASH_SECONDS          = 0.6    # duração do "VAI!" antes de liberar o jogo
@@ -92,7 +109,7 @@ class FallingObject:
     def __init__(self, emoji: str, is_correct: bool, track_y: int, speed: float):
         self.emoji      = emoji
         self.is_correct = is_correct
-        self.x          = float(WIN_W + 60)
+        self.x          = float(WIN_W + S(60))
         self.y          = float(track_y)
         self.track_y    = track_y
         self.speed      = speed        # px/s horizontal — fixado no momento do spawn
@@ -107,12 +124,14 @@ class FallingObject:
         self.was_dropped = False
         self.scored      = False
 
-    def drop(self, target_cx: int, hit_margin: int = 40):
+    def drop(self, target_cx: int, hit_margin: int = None):
         """
         Jogador levantou o braço.
         Define na hora se vai acertar (x dentro da margem do alvo).
         A queda é sempre reta — sem desvio horizontal.
         """
+        if hit_margin is None:
+            hit_margin = S(40)
         if self.state == "moving":
             self.state       = "falling"
             self.vy          = 0.0
@@ -123,14 +142,14 @@ class FallingObject:
         """Retorna True quando o objeto deve ser removido."""
         if self.state == "moving":
             self.x -= self.speed * dt
-            if self.x < -80:
+            if self.x < -S(80):
                 self.state = "done"    # saiu da tela sem ser derrubado
 
         elif self.state == "falling":
-            self.vy += 900 * dt   # gravidade — x não muda
+            self.vy += GRAVITY * dt   # gravidade — x não muda
             self.y  += self.vy * dt
-            if self.y > WIN_H - 60:
-                self.alpha = max(0, self.alpha - 400 * dt)
+            if self.y > WIN_H - S(60):
+                self.alpha = max(0, self.alpha - 400 * dt)  # alpha: unidade 0-255, não espacial
                 if self.alpha == 0:
                     self.state = "done"
 
@@ -138,7 +157,7 @@ class FallingObject:
 
     def get_rect(self) -> pygame.Rect:
         """Rect aproximado do emoji para colisão."""
-        return pygame.Rect(int(self.x) - 28, int(self.y) - 28, 56, 56)
+        return pygame.Rect(int(self.x) - S(28), int(self.y) - S(28), S(56), S(56))
 
 
 class Feedback:
@@ -148,11 +167,11 @@ class Feedback:
         self.color = color
         self.x     = cx
         self.y     = float(cy)
-        self.life  = 1.2   # segundos
+        self.life  = 1.2   # segundos — TEMPORAL, não escala
         self.alpha = 255
 
     def update(self, dt: float) -> bool:
-        self.y    -= 60 * dt
+        self.y    -= S(60) * dt
         self.life -= dt
         self.alpha = max(0, int(255 * (self.life / 1.2)))
         return self.life <= 0
@@ -165,11 +184,11 @@ class ScenePhase:
         self._cfg    = PHASE_CONFIG[phase]
 
         # Fontes (só para UI — emojis usam emoji_renderer)
-        self._font_ui        = pygame.font.SysFont("Arial", 18, bold=True)
-        self._font_small     = pygame.font.SysFont("Arial", 14)
-        self._font_badge     = pygame.font.SysFont("Arial", 17, bold=True)
-        self._font_fb        = pygame.font.SysFont("Arial", 38, bold=True)
-        self._font_countdown = pygame.font.SysFont("Arial", 96, bold=True)
+        self._font_ui        = pygame.font.SysFont("Arial", S(18), bold=True)
+        self._font_small     = pygame.font.SysFont("Arial", S(14))
+        self._font_badge     = pygame.font.SysFont("Arial", S(17), bold=True)
+        self._font_fb        = pygame.font.SysFont("Arial", S(38), bold=True)
+        self._font_countdown = pygame.font.SysFont("Arial", S(96), bold=True)
 
         # Pré-carrega todos os emojis desta fase
         all_emojis = (self._cfg["correct"] + self._cfg["incorrect"]
@@ -177,9 +196,9 @@ class ScenePhase:
         preload(all_emojis, size=FONT_SIZE_OBJ)
         preload([self._cfg["target_emoji"]], size=FONT_SIZE_TGT)
 
-        # Recipiente central — 80px abaixo do centro
+        # Recipiente central
         self._target_rect = pygame.Rect(
-            WIN_W // 2 - 70, WIN_H // 2 + 30, 140, 140
+            WIN_W // 2 - S(70), WIN_H // 2 + S(30), S(140), S(140)
         )
         self._target_surf = emoji_surface(
             self._cfg["target_emoji"], size=FONT_SIZE_TGT
@@ -247,7 +266,8 @@ class ScenePhase:
             self._spawn_timer = SPAWN_INTERVAL
 
         # Gesto: borda de subida do braço
-        raise_now   = gesture.raise_right
+        raise_now   = gesture.raise_right or gesture.raise_left
+        
         just_raised = raise_now and not self._prev_raise
         self._prev_raise = raise_now
 
@@ -268,7 +288,7 @@ class ScenePhase:
                 if obj.state == "done" and not obj.was_dropped:
                     self._resolve(obj, ended_in_target=False)
                 elif (obj.state == "falling" and not obj.will_hit
-                      and obj.y > WIN_H - 60):
+                      and obj.y > WIN_H - S(60)):
                     self._resolve(obj, ended_in_target=False)
 
             if finished:
@@ -331,7 +351,7 @@ class ScenePhase:
             # Dica ENTER (atalho de desenvolvimento)
             hint = self._font_small.render(
                 "ENTER → próxima fase (temporário)", True, (80, 80, 100))
-            surf.blit(hint, (WIN_W - hint.get_width() - 10, WIN_H - 22))
+            surf.blit(hint, (WIN_W - hint.get_width() - S(10), WIN_H - S(22)))
 
     # ── Internos: webcam ──────────────────────────────────────────────────────
     def _update_webcam(self, cam_packet: dict | None):
@@ -340,8 +360,8 @@ class ScenePhase:
             return
         import cv2
         frame = cam_packet["frame_rgb"]
-        # Redimensiona para o tamanho do overlay (160×120)
-        frame_small = cv2.resize(frame, (160, 120))
+        # Redimensiona para o tamanho do overlay
+        frame_small = cv2.resize(frame, (S(160), S(120)))
         self._webcam_surf = pygame.surfarray.make_surface(
             frame_small.swapaxes(0, 1)
         )
@@ -379,7 +399,7 @@ class ScenePhase:
         if not candidates:
             return
         nearest = min(candidates, key=lambda o: abs(o.x - WIN_W // 2))
-        nearest.drop(target_cx=self._target_rect.centerx, hit_margin=40)
+        nearest.drop(target_cx=self._target_rect.centerx)
 
     def _check_collision(self, obj: FallingObject):
         """
@@ -417,7 +437,7 @@ class ScenePhase:
         text, color = _FEEDBACK_BY_OUTCOME[outcome]
 
         self._feedbacks.append(
-            Feedback(text, color, WIN_W // 2, WIN_H // 2 - 80))
+            Feedback(text, color, WIN_W // 2, WIN_H // 2 - S(80)))
         self._flash       = 0.25
         self._flash_color = color
 
@@ -438,7 +458,7 @@ class ScenePhase:
             self._object_speed  = SPEED_LEVELS[self._speed_level]
             self._feedbacks.append(
                 Feedback("⚡ Mais rápido!", C_YELLOW,
-                         WIN_W // 2, WIN_H // 2 - 130))
+                         WIN_W // 2, WIN_H // 2 - S(130)))
 
         round_finished = (self._speed_level >= MAX_SPEED_INCREASES
                           and self._resolved >= TOTAL_OBJECTS_PER_PHASE)
@@ -450,13 +470,13 @@ class ScenePhase:
         import math
         # Anel pulsante
         pulse = 0.85 + 0.15 * math.sin(self._tick * 0.05)
-        r = int(90 * pulse)
-        ring_surf = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+        r = int(S(90) * pulse)
+        ring_surf = pygame.Surface((r * 2 + S(4), r * 2 + S(4)), pygame.SRCALPHA)
         pygame.draw.circle(ring_surf, (*C_YELLOW, 60),
-                           (r + 2, r + 2), r, 3)
+                           (r + S(2), r + S(2)), r, S(3))
         surf.blit(ring_surf, (
-            self._target_rect.centerx - r - 2,
-            self._target_rect.centery - r - 2,
+            self._target_rect.centerx - r - S(2),
+            self._target_rect.centery - r - S(2),
         ))
 
         # Emoji do recipiente
@@ -468,7 +488,7 @@ class ScenePhase:
             self._cfg["target_label"], True, C_YELLOW)
         surf.blit(lbl, lbl.get_rect(
             centerx=self._target_rect.centerx,
-            top=self._target_rect.bottom + 8))
+            top=self._target_rect.bottom + S(8)))
 
     def _draw_object(self, surf: pygame.Surface, obj: FallingObject):
         txt = emoji_surface(obj.emoji, size=FONT_SIZE_OBJ).copy()
@@ -478,52 +498,52 @@ class ScenePhase:
 
         # Sombra embaixo do objeto
         if obj.state == "moving":
-            shadow = pygame.Surface((50, 10), pygame.SRCALPHA)
+            shadow = pygame.Surface((S(50), S(10)), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow, (0, 0, 0, 60), shadow.get_rect())
-            surf.blit(shadow, (int(obj.x) - 25, obj.track_y + 28))
+            surf.blit(shadow, (int(obj.x) - S(25), obj.track_y + S(28)))
 
     def _draw_hud(self, surf: pygame.Surface):
-        hud = pygame.Surface((WIN_W, 56), pygame.SRCALPHA)
+        hud = pygame.Surface((WIN_W, S(56)), pygame.SRCALPHA)
         hud.fill((8, 4, 24, 210))
         surf.blit(hud, (0, 0))
 
         phase_txt = self._font_ui.render(
             f"FASE {self.phase}  —  {'Baú de Brinquedos 🧸' if self.phase == 1 else 'Cesto de Roupas 🧺'}",
             True, C_WHITE)
-        surf.blit(phase_txt, (20, 14))
+        surf.blit(phase_txt, (S(20), S(14)))
 
         # Pontuação + nível de velocidade, alinhados à direita
         score_txt = self._font_ui.render(
             f"Pontos: {self._score.total}   ⚡{self._speed_level}/{MAX_SPEED_INCREASES}",
             True, C_YELLOW)
-        surf.blit(score_txt, (WIN_W - score_txt.get_width() - 20, 14))
+        surf.blit(score_txt, (WIN_W - score_txt.get_width() - S(20), S(14)))
 
         # Barra de progresso da rodada
         progress = min(1.0, self._resolved / TOTAL_OBJECTS_PER_PHASE)
-        bar_x, bar_y, bar_w, bar_h = 20, 42, WIN_W - 40, 6
-        pygame.draw.rect(surf, (40, 35, 70), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
-        pygame.draw.rect(surf, C_TEAL, (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=3)
+        bar_x, bar_y, bar_w, bar_h = S(20), S(42), WIN_W - S(40), S(6)
+        pygame.draw.rect(surf, (40, 35, 70), (bar_x, bar_y, bar_w, bar_h), border_radius=S(3))
+        pygame.draw.rect(surf, C_TEAL, (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=S(3))
 
     def _draw_badge(self, surf: pygame.Surface):
         badge_txt = self._font_badge.render(self._cfg["badge"], True, C_BG)
-        bw = badge_txt.get_width() + 30
-        bh = badge_txt.get_height() + 10
+        bw = badge_txt.get_width() + S(30)
+        bh = badge_txt.get_height() + S(10)
         bx = WIN_W // 2 - bw // 2
-        by = 66
+        by = S(66)
         badge_bg = pygame.Surface((bw, bh), pygame.SRCALPHA)
         badge_bg.fill((*self._cfg["badge_color"], 230))
-        pygame.draw.rect(badge_bg, C_BG, (0, 0, bw, bh), 2, border_radius=12)
+        pygame.draw.rect(badge_bg, C_BG, (0, 0, bw, bh), S(2), border_radius=S(12))
         surf.blit(badge_bg, (bx, by))
-        surf.blit(badge_txt, (bx + 15, by + 5))
+        surf.blit(badge_txt, (bx + S(15), by + S(5)))
 
     def _draw_webcam(self, surf: pygame.Surface):
         """Overlay da webcam no canto inferior esquerdo."""
-        W, H = 160, 120
-        x, y = 8, WIN_H - H - 8
+        W, H = S(160), S(120)
+        x, y = S(8), WIN_H - H - S(8)
 
         # Borda
         pygame.draw.rect(surf, (60, 60, 80),
-                         (x - 2, y - 2, W + 4, H + 4), border_radius=8)
+                         (x - S(2), y - S(2), W + S(4), H + S(4)), border_radius=S(8))
 
         if self._webcam_surf:
             surf.blit(self._webcam_surf, (x, y))
@@ -537,15 +557,15 @@ class ScenePhase:
 
         # Label
         lbl = self._font_small.render("webcam", True, (100, 100, 120))
-        surf.blit(lbl, (x, y - 16))
+        surf.blit(lbl, (x, y - S(16)))
 
     def _draw_arm_indicator(self, surf: pygame.Surface):
         """Indicador visual de gesto no canto inferior direito."""
         color  = C_TEAL if self._prev_raise else (60, 60, 80)
         label  = "💪 BRAÇO LEVANTADO!" if self._prev_raise else "Levante o braço esquerdo"
         txt    = self._font_small.render(label, True, color)
-        surf.blit(txt, (WIN_W - txt.get_width() - 14, WIN_H - 44))
-        pygame.draw.circle(surf, color, (WIN_W - txt.get_width() - 26, WIN_H - 36), 6)
+        surf.blit(txt, (WIN_W - txt.get_width() - S(14), WIN_H - S(44)))
+        pygame.draw.circle(surf, color, (WIN_W - txt.get_width() - S(26), WIN_H - S(36)), S(6))
 
     def _draw_countdown_overlay(self, surf: pygame.Surface):
         """Tela semitransparente com a contagem regressiva de início da fase."""
@@ -562,4 +582,4 @@ class ScenePhase:
         surf.blit(txt_surf, txt_surf.get_rect(center=(WIN_W // 2, WIN_H // 2)))
 
         sub = self._font_ui.render("Prepare-se!", True, C_WHITE)
-        surf.blit(sub, sub.get_rect(centerx=WIN_W // 2, top=WIN_H // 2 + 62))
+        surf.blit(sub, sub.get_rect(centerx=WIN_W // 2, top=WIN_H // 2 + S(62)))

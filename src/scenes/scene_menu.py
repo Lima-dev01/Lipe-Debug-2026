@@ -4,6 +4,12 @@ Gerencia 3 telas via sub-estado interno:
   SUB_MENU        → botões Jogar / Sobre / Sair
   SUB_MODE_SELECT → sozinho ou 2 grupos
   SUB_ABOUT       → tela Sobre
+
+Todas as posições e tamanhos abaixo foram desenhados pensando numa
+resolução de referência de 800x600. Para suportar uma resolução interna
+maior (ver settings.json -> window.width/height) sem redesenhar tudo,
+cada valor literal passa pelo helper S(), que aplica o mesmo fator de
+escala (UI_SCALE) e preserva as proporções do layout original.
 """
 import sys
 import pygame
@@ -25,6 +31,15 @@ C_PANEL     = ( 18,  10,  48, 220)   # RGBA
 WIN_W = CONFIG["window"]["width"]
 WIN_H = CONFIG["window"]["height"]
 
+# Resolução de referência do design original = 800x600.
+UI_SCALE = WIN_W / 800
+
+
+def S(value: float) -> int:
+    """Escala um valor pensado para 800x600 até a resolução interna atual."""
+    return round(value * UI_SCALE)
+
+
 # Sub-estados internos
 SUB_MENU        = "menu"
 SUB_MODE_SELECT = "mode"
@@ -44,6 +59,7 @@ def _draw_gradient(surf: pygame.Surface):
 def _draw_stars(surf: pygame.Surface, tick: int):
     """Estrelas simples piscando no fundo."""
     import math
+    # Posições de referência (base 800x600) — escaladas na hora de desenhar.
     positions = [
         (80, 60), (200, 30), (350, 80), (500, 20), (650, 55),
         (750, 35), (100, 150), (300, 120), (600, 100), (720, 140),
@@ -52,7 +68,7 @@ def _draw_stars(surf: pygame.Surface, tick: int):
     for i, (x, y) in enumerate(positions):
         alpha = int(128 + 127 * math.sin((tick * 0.03) + i * 0.7))
         r = max(0, min(255, alpha))
-        pygame.draw.circle(surf, (r, r, r), (x, y), 2)
+        pygame.draw.circle(surf, (r, r, r), (S(x), S(y)), S(2))
 
 
 def _panel(surf: pygame.Surface, rect: pygame.Rect,
@@ -61,7 +77,7 @@ def _panel(surf: pygame.Surface, rect: pygame.Rect,
     panel = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
     panel.fill((18, 10, 48, 210))
     pygame.draw.rect(panel, (*border_color, 255),
-                     (0, 0, rect.w, rect.h), 3, border_radius=radius)
+                     (0, 0, rect.w, rect.h), S(3), border_radius=S(radius))
     surf.blit(panel, rect.topleft)
 
 
@@ -81,8 +97,8 @@ class Button:
             inflate = int(r.w * (self.hover_scale - 1))
             r = r.inflate(inflate, inflate // 2)
 
-        pygame.draw.rect(surf, self.bg, r, border_radius=14)
-        txt = render_text(self.label, 20, self.fg, bold=True)
+        pygame.draw.rect(surf, self.bg, r, border_radius=S(14))
+        txt = render_text(self.label, S(20), self.fg, bold=True)
         surf.blit(txt, txt.get_rect(center=r.center))
 
     def update(self, mouse_pos):
@@ -108,19 +124,19 @@ class ModeCard:
         panel  = pygame.Surface((self.rect.w, self.rect.h), pygame.SRCALPHA)
         panel.fill((18, 10, 48, 220))
         pygame.draw.rect(panel, (*border, 255),
-                         (0, 0, self.rect.w, self.rect.h), 3, border_radius=18)
+                         (0, 0, self.rect.w, self.rect.h), S(3), border_radius=S(18))
         surf.blit(panel, self.rect.topleft)
 
         # Ícone
-        icon_txt = render_text(self.icon, 52, C_WHITE)
+        icon_txt = render_text(self.icon, S(52), C_WHITE)
         surf.blit(icon_txt, icon_txt.get_rect(
-            centerx=self.rect.centerx, top=self.rect.top + 20))
+            centerx=self.rect.centerx, top=self.rect.top + S(20)))
 
         # Título
-        title_txt = render_text(self.title, 22, C_YELLOW, bold=True,
+        title_txt = render_text(self.title, S(22), C_YELLOW, bold=True,
                                 shadow=True, shadow_color=(0, 0, 0))
         surf.blit(title_txt, title_txt.get_rect(
-            centerx=self.rect.centerx, top=self.rect.top + 90))
+            centerx=self.rect.centerx, top=self.rect.top + S(90)))
 
         # Descrição (quebra linha manual)
         words = self.desc.split()
@@ -133,10 +149,10 @@ class ModeCard:
         lines.append(" ".join(line))
 
         for j, ln in enumerate(lines):
-            t = render_text(ln, 14, C_GRAY)
+            t = render_text(ln, S(14), C_GRAY)
             surf.blit(t, t.get_rect(
                 centerx=self.rect.centerx,
-                top=self.rect.top + 126 + j * 18))
+                top=self.rect.top + S(126) + j * S(18)))
 
     def update(self, mouse_pos):
         self._hovered = self.rect.collidepoint(mouse_pos)
@@ -154,20 +170,20 @@ class SceneMenu:
         self._lipe  = lipe_surface   # Surface do LIPE com alpha (pode ser None)
 
         # ── Botões do menu principal ──
-        bw, bh, bx = 260, 52, 60
-        self._btn_play  = Button(pygame.Rect(bx, 300, bw, bh), "▶  Jogar",
+        bw, bh, bx = S(260), S(52), S(60)
+        self._btn_play  = Button(pygame.Rect(bx, S(300), bw, bh), "▶  Jogar",
                                  bg=C_YELLOW, fg=C_BG_TOP)
-        self._btn_about = Button(pygame.Rect(bx, 364, bw, bh), "ℹ  Sobre",
+        self._btn_about = Button(pygame.Rect(bx, S(364), bw, bh), "  Sobre",
                                  bg=(50, 40, 90), fg=C_WHITE)
-        self._btn_quit  = Button(pygame.Rect(bx, 428, bw, bh), "✕  Sair",
+        self._btn_quit  = Button(pygame.Rect(bx, S(428), bw, bh), "  Sair",
                                  bg=(80, 30, 30), fg=(255, 140, 140))
         self._menu_buttons = [self._btn_play, self._btn_about, self._btn_quit]
 
         # ── Cards de modo ──
-        cw, ch = 340, 200
-        cx1 = WIN_W // 2 - cw - 20
-        cx2 = WIN_W // 2 + 20
-        cy  = WIN_H // 2 - ch // 2 + 20
+        cw, ch = S(340), S(200)
+        cx1 = WIN_W // 2 - cw - S(20)
+        cx2 = WIN_W // 2 + S(20)
+        cy  = WIN_H // 2 - ch // 2 + S(20)
         self._card_solo  = ModeCard(
             pygame.Rect(cx1, cy, cw, ch),
             "🧍", "Jogar Sozinho",
@@ -178,15 +194,15 @@ class SceneMenu:
             "👥", "Em 2 Grupos",
             "Dois grupos competem. Pode ser 1×1 ou vários×vários. Quem arruma mais?"
         )
-        bw2 = 160
+        bw2 = S(160)
         self._btn_back = Button(
-            pygame.Rect(WIN_W // 2 - bw2 // 2, cy + ch + 20, bw2, 44),
+            pygame.Rect(WIN_W // 2 - bw2 // 2, cy + ch + S(20), bw2, S(44)),
             "← Voltar", bg=(50, 40, 90), fg=C_WHITE
         )
 
         # ── Botão voltar (Sobre) ──
         self._btn_back_about = Button(
-            pygame.Rect(WIN_W // 2 - 80, WIN_H - 70, 160, 44),
+            pygame.Rect(WIN_W // 2 - S(80), WIN_H - S(70), S(160), S(44)),
             "← Voltar", bg=C_YELLOW, fg=C_BG_TOP
         )
 
@@ -249,14 +265,14 @@ class SceneMenu:
             lh = int(WIN_H * 0.88)
             lw = int(self._lipe.get_width() * lh / self._lipe.get_height())
             scaled = pygame.transform.smoothscale(self._lipe, (lw, lh))
-            surf.blit(scaled, (WIN_W - lw + 30, WIN_H - lh))
+            surf.blit(scaled, (WIN_W - lw + S(30), WIN_H - lh))
 
         # Título
-        t1 = render_text("JOGO DO LIPE", 52, C_YELLOW, bold=True,
+        t1 = render_text("JOGO DO LIPE", S(52), C_YELLOW, bold=True,
                          shadow=True, shadow_color=C_YELLOW_DK)
-        surf.blit(t1, (60, 180))
-        t2 = render_text("Pensamento Computacional na vida real", 16, C_GRAY)
-        surf.blit(t2, (62, 240))
+        surf.blit(t1, (S(60), S(180)))
+        t2 = render_text("Pensamento Computacional na vida real", S(16), C_GRAY)
+        surf.blit(t2, (S(62), S(240)))
 
         # Botões
         for b in self._menu_buttons:
@@ -264,9 +280,9 @@ class SceneMenu:
 
     def _draw_mode_select(self, surf: pygame.Surface):
         # Título
-        title = render_text("Como vocês vão jogar?", 32, C_YELLOW, bold=True,
+        title = render_text("Como vocês vão jogar?", S(32), C_YELLOW, bold=True,
                             shadow=True, shadow_color=(0, 0, 0))
-        surf.blit(title, title.get_rect(centerx=WIN_W // 2, top=60))
+        surf.blit(title, title.get_rect(centerx=WIN_W // 2, top=S(60)))
 
         self._card_solo.draw(surf)
         self._card_group.draw(surf)
@@ -274,21 +290,21 @@ class SceneMenu:
 
     def _draw_about(self, surf: pygame.Surface):
         # Painel
-        pw, ph = 700, 340
+        pw, ph = S(700), S(340)
         pr = pygame.Rect(WIN_W // 2 - pw // 2, WIN_H // 2 - ph // 2, pw, ph)
         _panel(surf, pr, border_color=C_TEAL)
 
         # LIPE pequeno
         if self._lipe:
-            lh = 200
+            lh = S(200)
             lw = int(self._lipe.get_width() * lh / self._lipe.get_height())
             scaled = pygame.transform.smoothscale(self._lipe, (lw, lh))
-            surf.blit(scaled, (pr.left + 20, pr.centery - lh // 2))
-            tx = pr.left + lw + 40
+            surf.blit(scaled, (pr.left + S(20), pr.centery - lh // 2))
+            tx = pr.left + lw + S(40)
         else:
-            tx = pr.left + 20
+            tx = pr.left + S(20)
 
-        # Textos
+        # Textos (tamanho de fonte de referência escalado; espaçamento também)
         lines = [
             ("Sobre o Jogo do LIPE", 22, C_TEAL,   True),
             ("", 8, C_WHITE, False),
@@ -302,10 +318,10 @@ class SceneMenu:
             ("🧩 Decomposição   🔍 Padrões", 13, C_YELLOW, False),
             ("💡 Abstração       ⚙️ Algoritmo", 13, C_YELLOW, False),
         ]
-        y = pr.top + 30
+        y = pr.top + S(30)
         for text, size, color, bold in lines:
-            t = render_text(text, size, color, bold=bold)
+            t = render_text(text, S(size), color, bold=bold)
             surf.blit(t, (tx, y))
-            y += size + 6
+            y += S(size + 6)
 
         self._btn_back_about.draw(surf)
