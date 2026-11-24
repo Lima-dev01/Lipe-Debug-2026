@@ -8,12 +8,14 @@ main.py — Jogo do LIPE  V1
 import sys
 import pygame
 
+
 from src.config     import CONFIG
 from src.game_state import GameState, State
 from src.camera     import CameraThread
 from src.gesture    import GestureDetector
 from src.scenes.scene_menu  import SceneMenu
 from src.scenes.scene_phase import ScenePhase
+from src.scenes.scene_story import SceneStory
 
 WIN_W = CONFIG["window"]["width"]
 WIN_H = CONFIG["window"]["height"]
@@ -25,6 +27,14 @@ TITLE = CONFIG["window"]["title"]
 # interno fixo de WIN_W x WIN_H — só a apresentação final na tela real
 # muda entre janela e tela cheia.
 DEFAULT_FULLSCREEN = CONFIG["window"].get("fullscreen", False)
+# Cenas de história (data/story.json) e para onde cada uma leva ao terminar.
+STORY_NEXT = {
+    State.INTRO_1:   State.INTRO_2,
+    State.INTRO_2:   State.DECOMP,
+    State.DECOMP:    State.PHASE_1,
+    State.ABSTRACAO: State.PHASE_2,
+    State.ALGORITMO: State.RESULT,
+}
 
 
 def load_lipe() -> pygame.Surface | None:
@@ -120,6 +130,7 @@ def main():
     gs         = GameState()
     scene_menu = SceneMenu(lipe_surface=lipe_surface)
     scene_phase: ScenePhase | None = None
+    scene_story: SceneStory | None = None
 
     # ── Câmera ────────────────────────────────────────────────────────────────
     cam     = CameraThread()
@@ -147,6 +158,7 @@ def main():
                     gs.go(State.MENU)
                     scene_menu.sub = "menu"
                     scene_phase    = None
+                    scene_story    = None
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
                 fullscreen = not fullscreen
@@ -163,14 +175,19 @@ def main():
             elif gs.current in (State.PHASE_1, State.PHASE_2):
                 if scene_phase:
                     scene_phase.handle_event(event)
+                elif gs.current in STORY_NEXT and scene_story:
+                   scene_story.handle_event(event)
 
         # ── Câmera / gesto ────────────────────────────────────────────────────
         packet = cam.get_latest()
         gesture.update(packet)
-        # ── Transição INTRO_1 → PHASE_1 (placeholder direto por ora) ─────────
-        if gs.current == State.INTRO_1:
-            gs.go(State.PHASE_1)
-
+        # ── Cenas de história: cria ao entrar, avança ao terminar ────────────
+        if gs.current in STORY_NEXT:
+            if scene_story is None or scene_story.key != gs.current.name:
+                scene_story = SceneStory(gs.current.name)
+            if scene_story.done:
+                gs.go(STORY_NEXT[gs.current])
+                scene_story = None
         # ── Inicializa ScenePhase ao entrar na fase ───────────────────────────
         if gs.current == State.PHASE_1 and (
                 scene_phase is None or scene_phase.phase != 1):
@@ -182,11 +199,11 @@ def main():
 
         # ── Transição PHASE_1 → PHASE_2 quando done ──────────────────────────
         if gs.current == State.PHASE_1 and scene_phase and scene_phase.done:
-            gs.go(State.PHASE_2)
+            gs.go(State.ABSTRACAO)
             scene_phase = None
 
         if gs.current == State.PHASE_2 and scene_phase and scene_phase.done:
-            gs.go(State.RESULT)
+            gs.go(State.ALGORITMO)
             scene_phase = None
 
         # ── Update ────────────────────────────────────────────────────────────
@@ -195,6 +212,9 @@ def main():
 
         elif gs.current in (State.PHASE_1, State.PHASE_2) and scene_phase:
             scene_phase.update(dt, gesture, cam_packet=packet)
+        elif gs.current in STORY_NEXT and scene_story:
+            scene_story.update(dt, gesture)
+ 
 
         # ── Draw (sempre no canvas interno 800x600) ─────────────────────────────
         if gs.current == State.MENU:
@@ -202,6 +222,8 @@ def main():
 
         elif gs.current in (State.PHASE_1, State.PHASE_2) and scene_phase:
             scene_phase.draw(canvas)
+        elif gs.current in STORY_NEXT and scene_story:
+            scene_story.draw(canvas)
 
         else:
             draw_placeholder(canvas, gs, font)

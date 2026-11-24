@@ -117,3 +117,174 @@ def render_mixed(text: str, size: int, color, bold: bool = False,
         combined.blit(surf, (x, y))
         x += surf.get_width()
     return combined
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Arte do modo história: cache, placeholder, fundos "cover" e personagens
+# ══════════════════════════════════════════════════════════════════════════════
+IMAGES_DIR = os.path.join("assets", "images")
+
+# Cores base da UI desenhada em código
+C_UI_DARK  = (0x14, 0x22, 0x41)   # #142241
+C_UI_LIGHT = (0xD9, 0xD9, 0xD9)   # #D9D9D9
+
+# Arquivos exportados DEITADOS (cabeça à esquerda, pés à direita).
+# Quando a arte for reexportada em pé, basta remover o prefixo daqui.
+ROTATED_PREFIXES = ("menino/corpo_", "mae/corpo_", "lipe/corpo_")
+
+# Pose usada como referência de TAMANHO de cada personagem. Todas as
+# poses daquele personagem usam a mesma escala e a mesma linha dos pés
+# medidas nesta pose, então trocar de pose nunca muda o tamanho nem faz
+# o personagem "pular".
+REFERENCE_POSE = {
+    "menino": "menino/corpo_feliz",
+    "mae":    "mae/corpo_neutro",
+    "lipe":   "lipe/corpo_neutro",
+    "amiga1": "amigos/amiga1_neutra",
+    "amigo2": "amigos/amigo2_neutro",
+    "amiga3": "amigos/amiga3_neutra",
+}
+
+_image_cache: dict = {}
+_missing: set = set()           # arquivos que faltaram (avisados 1x cada)
+_scaled_cache: dict = {}
+_metrics_cache: dict = {}
+
+
+def _placeholder(label: str, size: tuple) -> pygame.Surface:
+    """Retângulo com X e o nome do arquivo, para imagem que não existe."""
+    w, h = size
+    surf = pygame.Surface(size, pygame.SRCALPHA)
+    surf.fill((*C_UI_DARK, 200))
+    border = max(2, w // 120)
+    pygame.draw.rect(surf, C_UI_LIGHT, surf.get_rect(), border)
+    pygame.draw.line(surf, C_UI_LIGHT, (0, 0), (w, h), border)
+    pygame.draw.line(surf, C_UI_LIGHT, (w, 0), (0, h), border)
+    txt = font(max(14, w // 14), bold=True).render(label, True, C_UI_LIGHT, C_UI_DARK)
+    surf.blit(txt, txt.get_rect(center=(w // 2, h // 2)))
+    return surf
+
+
+def get_image(rel_path: str, alpha: bool = True,
+              placeholder_size: tuple = (1080, 1920)) -> pygame.Surface:
+    """
+    Carrega (com cache) uma imagem relativa à raiz do projeto.
+    Se o arquivo não existir ou não abrir, devolve um placeholder com o
+    nome do arquivo e avisa no console uma única vez — o jogo não quebra.
+    """
+    key = (rel_path, alpha)
+    if key in _image_cache:
+        return _image_cache[key]
+    try:
+        img = pygame.image.load(_path(rel_path))
+        img = img.convert_alpha() if alpha else img.convert()
+    except (FileNotFoundError, pygame.error) as e:
+        if rel_path not in _missing:
+            _missing.add(rel_path)
+            print(f"[AVISO] Imagem não encontrada: {rel_path} ({e}) — usando placeholder.")
+        img = _placeholder(os.path.basename(rel_path), placeholder_size)
+    _image_cache[key] = img
+    return img
+
+
+def image_missing(rel_path: str) -> bool:
+    return rel_path in _missing
+
+
+# ── Fundos ────────────────────────────────────────────────────────────────────
+def background_cover(name: str, size: tuple) -> pygame.Surface:
+    """
+    Fundo `assets/images/backgrounds/<name>.png` escalado em modo
+    "cover": preenche todo o `size` mantendo a proporção e corta o
+    excesso igualmente dos dois lados (16:9 em canvas 4:3 → corta as
+    laterais). Resultado em cache por (nome, tamanho).
+    """
+    key = ("bg", name, size)
+    if key in _scaled_cache:
+        return _scaled_cache[key]
+    src = get_image(os.path.join(IMAGES_DIR, "backgrounds", f"{name}.png"),
+                    alpha=False, placeholder_size=(1920, 1080))
+    sw, sh = src.get_size()
+    tw, th = size
+    scale = max(tw / sw, th / sh)
+    scaled = pygame.transform.smoothscale(src, (max(1, round(sw * scale)),
+                                                max(1, round(sh * scale))))
+    out = pygame.Surface(size).convert()
+    out.blit(scaled, ((tw - scaled.get_width()) // 2,
+                      (th - scaled.get_height()) // 2))
+    _scaled_cache[key] = out
+    return out
+
+
+# ── Personagens ───────────────────────────────────────────────────────────────
+def _character_id(pose: str) -> str:
+    """'menino/corpo_feliz' → 'menino'; 'amigos/amiga1_neutra' → 'amiga1'."""
+    folder, _, fname = pose.partition("/")
+    return fname.split("_")[0] if folder == "amigos" else folder
+
+
+def _pose_raw(pose: str) -> pygame.Surface:
+    """Imagem da pose no tamanho original, já em pé (girada se preciso)."""
+    key = ("pose", pose)
+    if key in _image_cache:
+        return _image_cache[key]
+    rel = os.path.join(IMAGES_DIR, "characters", f"{pose}.png")
+    img = get_image(rel, alpha=True)
+    if pose.startswith(ROTATED_PREFIXES) and not image_missing(rel):
+        img = pygame.transform.rotate(img, -90)     # horário: cabeça para cima
+    _image_cache[key] = img
+    return img
+
+
+def _character_metrics(char_id: str, fallback_pose: str) -> tuple:
+    """(altura do corpo, linha dos pés, centro x) medidos na pose de referência."""
+    if char_id in _metrics_cache:
+        return _metrics_cache[char_id]
+    ref = REFERENCE_POSE.get(char_id, fallback_pose)
+    rel = os.path.join(IMAGES_DIR, "characters", f"{ref}.png")
+    img = _pose_raw(ref)
+    if image_missing(rel):              # sem referência: usa a própria pose
+        img = _pose_raw(fallback_pose)
+    r = img.get_bounding_rect(min_alpha=128)
+    if r.height == 0:
+        r = img.get_rect()
+    metrics = (r.height, r.bottom, r.centerx)
+    _metrics_cache[char_id] = metrics
+    return metrics
+
+
+def character_sprite(pose: str, body_height_px: int) -> tuple:
+    """
+    Devolve (surface, (ancora_x, ancora_y)) da pose, escalada para que o
+    personagem (medido na pose de referência) tenha `body_height_px` de
+    altura. A âncora é o ponto "entre os pés" dentro da surface: quem
+    desenha posiciona esse ponto na linha do chão.
+    """
+    key = ("char", pose, body_height_px)
+    if key in _scaled_cache:
+        return _scaled_cache[key]
+    raw = _pose_raw(pose)
+    body_h, feet_y, center_x = _character_metrics(_character_id(pose), pose)
+    s = body_height_px / body_h
+    w, h = raw.get_size()
+    surf = pygame.transform.smoothscale(raw, (max(1, round(w * s)), max(1, round(h * s))))
+    result = (surf, (round(center_x * s), round(feet_y * s)))
+    _scaled_cache[key] = result
+    return result
+
+
+def portrait(name: str, height_px: int) -> pygame.Surface:
+    """Busto `characters/<name>.png` (ex.: 'lipe/rosto_alegre') recortado e escalado."""
+    key = ("portrait", name, height_px)
+    if key in _scaled_cache:
+        return _scaled_cache[key]
+    img = get_image(os.path.join(IMAGES_DIR, "characters", f"{name}.png"),
+                    alpha=True, placeholder_size=(600, 600))
+    r = img.get_bounding_rect(min_alpha=128)
+    if r.height:
+        img = img.subsurface(r)
+    s = height_px / img.get_height()
+    surf = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * s)), height_px))
+    _scaled_cache[key] = surf
+    return surf

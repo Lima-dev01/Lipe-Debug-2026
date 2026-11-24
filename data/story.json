@@ -1,0 +1,156 @@
+{
+  "_ajuda": [
+    "Roteiro do modo história. Edite à vontade sem mexer no código.",
+    "fundo: nome em assets/images/backgrounds (sem .png).",
+    "personagens: imagem = pasta/arquivo em assets/images/characters (sem .png);",
+    "  x = posição horizontal do centro (0 = esquerda, 1 = direita);",
+    "  altura = altura do corpo como fração da altura da tela;",
+    "  base (opcional) = linha dos pés como fração da altura (padrão 0.80, logo acima da caixa de diálogo).",
+    "fala: chave em 'nomes'. retrato (opcional): busto mostrado na caixa de diálogo."
+  ],
+  "nomes": {
+    "menino": "Menino",
+    "mae": "Mãe",
+    "lipe": "LIPE",
+    "amigos": "Amigos"
+  },
+  "cenas": {
+    "INTRO_1": [
+      {
+        "fundo": "sala_vazia",
+        "personagens": [
+          {"imagem": "menino/corpo_feliz",  "x": 0.22, "altura": 0.52},
+          {"imagem": "mae/corpo_neutro",    "x": 0.52, "altura": 0.66},
+          {"imagem": "lipe/corpo_neutro",   "x": 0.82, "altura": 0.36}
+        ],
+        "fala": "menino",
+        "retrato": "menino/rosto_feliz",
+        "texto": "Mãe, meus amigos vão dormir aqui hoje! Posso?"
+      },
+      {
+        "fundo": "sala_vazia",
+        "personagens": [
+          {"imagem": "menino/corpo_surpreso", "x": 0.22, "altura": 0.52},
+          {"imagem": "mae/corpo_falando",     "x": 0.52, "altura": 0.66},
+          {"imagem": "lipe/corpo_neutro",     "x": 0.82, "altura": 0.36}
+        ],
+        "fala": "mae",
+        "texto": "Claro! Mas o seu quarto precisa estar arrumado."
+      },
+      {
+        "fundo": "sala_vazia",
+        "personagens": [
+          {"imagem": "menino/corpo_feliz",  "x": 0.22, "altura": 0.52},
+          {"imagem": "mae/corpo_neutro",    "x": 0.52, "altura": 0.66},
+          {"imagem": "lipe/corpo_acenando", "x": 0.82, "altura": 0.36}
+        ],
+        "fala": "lipe",
+        "retrato": "lipe/rosto_alegre",
+        "texto": "Eu ajudo! Vamos arrumar juntos?"
+      }
+    ],
+    "INTRO_2": [
+      {
+        "fundo": "sala_vazia",
+        "personagens": [
+          {"imagem": "menino/corpo_pensativo", "x": 0.30, "altura": 0.52},
+          {"imagem": "lipe/corpo_neutro",      "x": 0.72, "altura": 0.36}
+        ],
+        "fala": "menino",
+        "retrato": "menino/rosto_triste",
+        "texto": "E se eu não conseguir arrumar tudo a tempo?"
+      },
+      {
+        "fundo": "sala_vazia",
+        "personagens": [
+          {"imagem": "menino/corpo_afirmando", "x": 0.30, "altura": 0.52},
+          {"imagem": "lipe/corpo_afirmando",   "x": 0.72, "altura": 0.36}
+        ],
+        "fala": "lipe",
+        "retrato": "lipe/rosto_piscando",
+        "texto": "Calma! Eu te ensino a arrumar passo a passo."
+      }
+    ],
+    "DECOMP": [
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_mostrando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Decomposição: dividir um problema grande em partes pequenas."
+      },
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_apontando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Primeiro, os brinquedos! Guarde todos no baú."
+      }
+    ],
+    "ABSTRACAO": [
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_mostrando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Abstração: olhar só o que importa e ignorar o resto."
+      },
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_apontando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Agora as roupas! Cor e tamanho não importam: é roupa ou não é?"
+      }
+    ],
+    "ALGORITMO": [
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_mostrando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Algoritmo: uma sequência de passos para resolver o problema."
+      },
+      {
+        "fundo": "central_lipe",
+        "personagens": [
+          {"imagem": "lipe/corpo_comemorando", "x": 0.50, "altura": 0.55}
+        ],
+        "fala": "lipe",
+        "texto": "Você fez assim: separar, guardar os brinquedos, guardar as roupas."
+      }
+    ],
+    "RESULT": [
+      {
+        "fundo": "quarto_festa",
+        "personagens": [
+          {"imagem": "menino/corpo_feliz",     "x": 0.14, "altura": 0.52},
+          {"imagem": "lipe/corpo_acenando",    "x": 0.36, "altura": 0.36},
+          {"imagem": "amigos/amiga1_acenando", "x": 0.58, "altura": 0.50},
+          {"imagem": "amigos/amigo2_acenando", "x": 0.73, "altura": 0.48},
+          {"imagem": "amigos/amiga3_acenando", "x": 0.88, "altura": 0.50}
+        ],
+        "fala": "amigos",
+        "texto": "Chegamos!"
+      },
+      {
+        "fundo": "quarto_festa",
+        "personagens": [
+          {"imagem": "menino/corpo_comemorando",  "x": 0.14, "altura": 0.52},
+          {"imagem": "lipe/corpo_comemorando",    "x": 0.36, "altura": 0.36},
+          {"imagem": "amigos/amiga1_comemorando", "x": 0.58, "altura": 0.50},
+          {"imagem": "amigos/amigo2_comemorando", "x": 0.73, "altura": 0.48},
+          {"imagem": "amigos/amiga3_comemorando", "x": 0.88, "altura": 0.50}
+        ],
+        "fala": "menino",
+        "retrato": "menino/rosto_feliz",
+        "texto": "Obrigado, LIPE! O quarto ficou ótimo!"
+      }
+    ]
+  }
+}
